@@ -103,6 +103,74 @@ def migrate_users(source_db, target_db):
     # insert wp_users
 
 
+def execute_sql(db, sql, args, commit=False, get_last_id=False):
+
+    my_cursor = db.cursor()
+
+    my_cursor.execute(sql)
+
+    if commit:
+        db.commit()
+
+    if get_last_id:
+        return my_cursor.lastrowid
+    else:
+        my_result = my_cursor.fetchall()
+
+
+def create_wp_user(r):
+
+    # delete existing from wp_usermeta
+
+    sql = "DELETE FROM wp_usermeta WHERE user_id in (SELECT ID FROM wp_users WHERE user_login=%s)"
+    execute_sql(TARGET_DB, sql, args=r['Code'])
+
+    # delete existing from wp_users
+
+    sql = "DELETE FROM wp_users WHERE user_login=%s"
+    execute_sql(TARGET_DB, sql, args=r['Code'])
+
+    # insert new in wp_users
+
+    sql = ("INSERT INTO wp_users"
+           " (user_login, user_pass, user_nicename, user_email, user_url, user_registered, user_activation_key, user_status, display_name)"
+           "VALUES %(user_login)s, %(user_pass)s, %(user_nicename)s, %(user_url)s, %(user_registered)s, %(user_activation_key)s, %user_status)s, %(display_name)s")
+
+    t = dict()
+    t['user_login'] = r["Code"]
+    t['user_pass'] = ''
+    t['user_nicename'] = r["Code"]
+    t['user_email'] = r["EmailAddress"]
+    t['user_url'] = ''
+    t['user_registered'] = r["Created"]
+    t['user_activation_key'] = ''
+    t['user_status'] = 0
+    t['display_name'] = r["Code"]
+
+    ID = execute_sql(target_db, sql, t, commit=True, get_last_id=True)
+
+    # insert new in wp_usermeta
+
+
+def migrate_users():
+
+    # delete existing data
+
+    # fetch data
+
+    my_cursor = source_db.cursor()
+
+    sql = "SELECT * FROM Artists LIMIT 100"
+    my_cursor.execute(source_db, sql)
+
+    my_result = my_cursor.fetchall()
+
+    for r in my_result:
+        create_wp_user(r)
+        # insert wp_usermeta(r)
+        print(r)
+
+
 def main():
 
     source_db = connect(HOST, SOURCE_USER, SOURCE_PASSWORD, SOURCE_DATABASE)
