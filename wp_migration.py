@@ -1,6 +1,10 @@
+# Mark Hayhurst - October 2019
+
 import mysql.connector
+from slugify import slugify
 
 HOST = "192.196.156.250"
+HOST = "127.0.0.1"
 
 SOURCE_USER = "ocdev_ocadmin"
 SOURCE_PASSWORD = "@xxwM39eV54B"
@@ -10,6 +14,17 @@ TARGET_USER = "iamwp_dev"
 TARGET_PASSWORD = "J!2hFvaAKIq4"
 TARGET_DATABASE = "iamwp_dev"
 
+MY_CACHE = None
+
+def cache():
+    """singleton reference to dict"""
+
+    global MY_CACHE
+
+    if MY_CACHE:
+        MY_CACHE
+    return MY_CACHE
+
 
 def connect(host, user, password, database):
 
@@ -17,71 +32,10 @@ def connect(host, user, password, database):
         host=host,
         user=user,
         passwd=password,
+        database=database,
     )
 
     return db
-
-
-def migrate_WorksCategory(my_source_db, my_target_db):
-
-    my_source_cursor = my_source_db.cursor()
-    my_target_cursor = my_target_db.cursor()
-
-    term_id_minimum = 100
-    term_id_maximum = 199
-
-    # delete existing
-
-    wp_terms_delete_sql = "DELETE FROM wp_terms WHERE term_id BETWEEN %(term_id_minimum)s AND %(term_id_maximum)"
-    wp_term_taxonomy_delete_sql = "DELETE FROM wp_term_taxonomy WHERE term_id BETWEEN %(term_id_minimum)s AND %(term_id_maximum)"
-
-    my_target_cursor.execute(wp_terms_delete_sql, {'term_id_minimum': term_id_minimum, 'term_id_maximum': term_id_maximum})
-    my_target_cursor.execute(wp_term_taxonomy_delete_sql, {'term_id_minimum': term_id_minimum, 'term_id_maximum': term_id_maximum})
-
-    # fetch data
-
-    WorksCategory_sql = "SELECT ID,Description,Sequence,PageTitle,MetaDescription,ContentHeading,DescriptiveText,CanonicalURL,LastUpdated FROM WorksCategory ORDER BY ID"
-    my_source_cursor.execute(WorksCategory_sql)
-
-    my_result = my_source_cursor.fetchall()
-
-    wp_terms_insert_sql = "INSERT INTO wp_terms(term_id,name,slug,term_group) VALUES(%(term_id)s,%(name)s,%(slug)s,%(term_group)s)"
-    wp_term_taxonomy_insert_sql = "INSERT INTO wp_term_taxonomy(term_taxonomy_id,term_id,taxonomy,description,parent,count) VALUES(%(term_taxonomy_id)s,%(term_id)s,%(taxonomy)s,%(description)s,%(parent)s,%(count)s)"
-
-    data_wp_terms = dict()
-    data_wp_term_taxonomy = dict()
-
-    term_group = 0
-    term_id = 100
-    taxonomy = 'product_cat'
-    parent = 0
-    count = 0
-
-    for r in my_result:
-        data_wp_terms['term_id'] = term_id
-        data_wp_terms['name'] = r['Name']
-        data_wp_terms['slug'] = r['Name']
-        data_wp_terms['term_group'] = term_group
-
-        my_target_cursor.execute(wp_terms_insert_sql, data_wp_terms)
-
-        data_wp_term_taxonomy['term_taxonomy_id'] = term_id
-        data_wp_term_taxonomy['term_id'] = term_id
-        data_wp_term_taxonomy['taxonomy'] = taxonomy
-        data_wp_term_taxonomy['description'] = data_wp_terms['name']
-        data_wp_term_taxonomy['parent'] = parent
-        data_wp_term_taxonomy['count'] = count
-
-        my_target_cursor.execute(wp_term_taxonomy_insert_sql, data_wp_term_taxonomy)
-
-        print(data_wp_terms['name'])
-
-        term_id += 1
-
-    my_target_db.commit()
-
-    my_target_cursor.close()
-    my_source_cursor.close()
 
 
 def migrate_users(source_db, target_db):
@@ -107,7 +61,7 @@ def execute_sql(db, sql, args, commit=False, get_last_id=False):
 
     my_cursor = db.cursor()
 
-    my_cursor.execute(sql)
+    my_cursor.execute(sql, args)
 
     if commit:
         db.commit()
@@ -115,7 +69,7 @@ def execute_sql(db, sql, args, commit=False, get_last_id=False):
     if get_last_id:
         return my_cursor.lastrowid
     else:
-        my_result = my_cursor.fetchall()
+        return my_cursor.fetchall()
 
 
 def create_wp_user(r):
@@ -152,6 +106,61 @@ def create_wp_user(r):
     # insert new in wp_usermeta
 
 
+def migrate_categories(my_source_db, my_target_db, table, label):
+
+    my_source_cursor = my_source_db.cursor()
+    my_target_cursor = my_target_db.cursor()
+
+    # get parent id
+
+    sql = "SELECT term_id FROM wp_terms where name='%s' " % label
+    results = execute_sql(my_target_db, sql, '' )
+    group_id = results[0][0]
+    parent = group_id
+
+    # get source data
+
+    sql = "SELECT * FROM %s ORDER BY ID" % table
+
+    results = execute_sql(my_source_db, sql, '' )
+
+    # create individual rows
+
+    wp_terms_args = dict()
+    wp_termmeta_args = dict()
+    wp_term_taxonomy_args = dict()
+
+    wp_terms_args['term_group'] = 0
+    wp_term_taxonomy_args['taxonomy'] = 'product_cat'
+    wp_term_taxonomy_args['parent'] = parent
+    wp_term_taxonomy_args['count'] = 0
+
+    for r in results:
+        print(r)
+        wp_terms_sql = "INSERT INTO wp_terms (name,slug,term_group) VALUES (%(name)s,%(slug)s,%(term_group)s)"
+        wp_terms_args['name'] = r[1]
+        wp_terms_args['slug'] = slugify(r[1])
+        print( wp_terms_args)
+        term_id = execute_sql(my_target_db, wp_terms_sql, wp_terms_args, commit=True, get_last_id=True)
+
+        wp_termmeta_args['term_id'] = term_id
+        wp_termmeta_args['order'] = 0
+        wp_termmeta_args['display_type'] = ''
+        wp_termmeta_args['thumbnail_id'] = 0
+        for meta_key in ['order', 'display_type', 'thumbnail_id']:
+            wp_termmeta_args['meta_key'] = meta_key
+            wp_termmeta_args['meta_value'] = wp_termmeta_args[meta_key]
+            wp_termmeta_sql = "INSERT INTO wp_termmeta (term_id,meta_key,meta_value) VALUES (%(term_id)s,%(meta_key)s,%(meta_value)s)"
+            print( wp_termmeta_args)
+            meta_id = execute_sql(my_target_db, wp_termmeta_sql, wp_termmeta_args, commit=True, get_last_id=True)
+
+        wp_term_taxonomy_args['term_id'] = term_id
+        wp_term_taxonomy_args['description'] = ''  # needs to be blank
+        wp_term_taxonomy_sql = "INSERT INTO wp_term_taxonomy (term_id,taxonomy,description,parent,count) VALUES (%(term_id)s,%(taxonomy)s,%(description)s,%(parent)s,%(count)s)"
+        print( wp_term_taxonomy_args)
+        term_taxonomy_id = execute_sql(my_target_db, wp_term_taxonomy_sql, wp_term_taxonomy_args, commit=True, get_last_id=True)
+
+
 def migrate_users():
 
     # delete existing data
@@ -175,6 +184,13 @@ def main():
 
     source_db = connect(HOST, SOURCE_USER, SOURCE_PASSWORD, SOURCE_DATABASE)
     target_db = connect(HOST, TARGET_USER, TARGET_PASSWORD, TARGET_DATABASE)
+
+    r = execute_sql(source_db, 'SELECT * FROM Artists LIMIT 10', '')
+    print(r)
+
+    # migrate_categories(source_db, target_db, "WorksCategory", "Category")
+    # migrate_categories(source_db, target_db, "WorksSubject", "Subject")
+    # migrate_categories(source_db, target_db, "WorksMedium", "Medium")
 
     pass
 
