@@ -23,6 +23,7 @@ TARGET_DB = None
 
 MY_CACHE = None
 
+
 def cache():
     """singleton reference to dict"""
 
@@ -43,25 +44,6 @@ def connect(host, user, password, database):
     )
 
     return db
-
-
-def migrate_users():
-
-    # delete existing data
-
-    # fetch data
-
-    my_cursor = SOURCE_DB.cursor()
-
-    sql = "SELECT * FROM Artists ORDER BY Code LIMIT 10"
-    my_cursor.execute(sql)
-
-    my_result = my_cursor.fetchall()
-
-    for r in my_result:
-        print(r)
-
-    # insert wp_users
 
 
 def execute_sql(db, sql, args, commit=False, get_results=True, get_last_id=False):
@@ -235,22 +217,196 @@ def create_user(r):
         UMETA_ID = execute_sql(TARGET_DB, sql, t, commit=True, get_last_id=True)
 
 
-def migrate_categories(my_source_db, my_target_db, table, label):
-    my_source_cursor = my_source_db.cursor()
-    my_target_cursor = my_target_db.cursor()
+def migrate_products():
+    global SOURCE_DB
+    global TARGET_DB
+
+    my_source_cursor = SOURCE_DB.cursor()
+    my_target_cursor = TARGET_DB.cursor()
+
+    # get term_ids
+
+    sql = "SELECT term_id, name FROM wp_terms"
+    results = execute_sql(TARGET_DB, sql, '')
+
+    term_ids = dict()
+
+    for r in results:
+        term_ids[r['name']]=r['term_id']
+
+    # print(term_ids)
+
+
+    # get source data
+
+    sql = "SELECT * FROM Works ORDER BY ID LIMIT 10"
+
+    results = execute_sql(SOURCE_DB, sql, '')
+
+    # wp_posts
+
+    wp_posts_sql = """
+    INSERT INTO
+        wp_posts(
+            post_author,
+            post_date,
+            post_date_gmt,
+            post_content,
+            post_title,
+            post_excerpt,
+            post_status,
+            comment_status,
+            ping_status,
+            post_password,
+            post_name,
+            to_ping,
+            pinged,
+            post_modified,
+            post_modified_gmt,
+            post_content_filtered,
+            post_parent,
+            guid,
+            menu_order,
+            post_type,
+            post_mime_type,
+            comment_count
+        )
+    VALUES(
+            %(post_author)s,
+            %(post_date)s,
+            %(post_date_gmt)s,
+            %(post_content)s,
+            %(post_title)s,
+            %(post_excerpt)s,
+            %(post_status)s,
+            %(comment_status)s,
+            %(ping_status)s,
+            %(post_password)s,
+            %(post_name)s,
+            %(to_ping)s,
+            %(pinged)s,
+            %(post_modified)s,
+            %(post_modified_gmt)s,
+            %(post_content_filtered)s,
+            %(post_parent)s,
+            %(guid)s,
+            %(menu_order)s,
+            %(post_type)s,
+            %(post_mime_type)s
+        );
+    """
+
+    wp_postmeta_sql = """
+    INSERT INTO wp_postmeta
+        (
+            meta_id,
+            post_id,
+            meta_key,
+            meta_value
+        )
+        VALUES
+        (
+            %(meta_id)s,
+            %(post_id)s,
+            %(meta_key)s,
+            %(meta_value)s
+        );
+    """
+
+    wp_term_relationship_sql = """
+    INSERT INTO wp_term_relationships
+        (
+            object_id,
+            term_taxonomy_id,
+            term_order
+        )
+        VALUES
+        (
+            %(object_id)s,
+            %(term_taxonomy_id)s,
+            %(term_order)s
+        );
+    """
+
+    wp_wc_product_meta_lookup_sql = """
+    INSERT INTO wp_wc_product_meta_lookup
+        (
+            product_id,
+            sku,
+            virtual,
+            downloadable,
+            min_price,
+            max_price,
+            onsale,
+            stock_quantity,
+            stock_status,
+            rating_count,
+            average_rating,
+            total_sales
+        )
+        VALUES
+        (
+            %(product_id)s,
+            %(sku)s,
+            %(virtual)s,
+            %(downloadable)s,
+            %(min_price)s,
+            %(max_price)s,
+            %(onsale)s,
+            %(stock_quantity)s,
+            %(stock_status)s,
+            %(rating_count)s,
+            %(average_rating)s,
+            %(total_sales)s
+        );
+    """
+
+    wp_posts_args = dict()
+    wp_posts_args['post_status'] = 'publish'
+    wp_posts_args['post_password'] = None
+    wp_posts_args['ping_status'] = 'closed'
+    wp_posts_args['common_status'] = 'closed'
+    wp_posts_args['to_ping'] = None
+    wp_posts_args['pinged'] = None
+    wp_posts_args['post_content_filtered'] = None
+    wp_posts_args['post_parent'] = 0
+    wp_posts_args['menu_order'] = 0
+    wp_posts_args['post_type'] = 'product'
+    wp_posts_args['comment_count'] = 0
+
+    for r in results:
+        wp_posts_args['post_name'] = r['CanonicalPath']
+        wp_posts_args['post_title'] = r['Title']
+        wp_posts_args['post_content'] = r['ArtistNotes']
+        wp_posts_args['post_date'] = r['Created']
+        wp_posts_args['post_date_gmt'] = r['Created']
+        wp_posts_args['post_modified'] = r['LastUpdated']
+        wp_posts_args['post_modified_gmt'] = r['LastUpdated']
+        wp_posts_args['guid'] = None
+
+        print(wp_posts_args)
+        post_id = execute_sql(TARGET_DB, wp_posts_sql, wp_posts_args, commit=True, get_last_id=True)
+
+
+def migrate_categories(table, label):
+    global SOURCE_DB
+    global TARGET_DB
+
+    my_source_cursor = SOURCE_DB.cursor()
+    my_target_cursor = TARGET_DB.cursor()
 
     # get parent id
 
     sql = "SELECT term_id FROM wp_terms where name='%s' " % label
-    results = execute_sql(my_target_db, sql, '')
-    group_id = results[0][0]
+    results = execute_sql(TARGET_DB, sql, '')
+    group_id = results[0]['term_id']
     parent = group_id
 
     # get source data
 
-    sql = "SELECT * FROM %s ORDER BY ID" % table
+    sql = "SELECT ID,Description,Sequence FROM %s ORDER BY ID" % table
 
-    results = execute_sql(my_source_db, sql, '')
+    results = execute_sql(SOURCE_DB, sql, '')
 
     # create individual rows
 
@@ -266,13 +422,13 @@ def migrate_categories(my_source_db, my_target_db, table, label):
     for r in results:
         print(r)
         wp_terms_sql = "INSERT INTO wp_terms (name,slug,term_group) VALUES (%(name)s,%(slug)s,%(term_group)s)"
-        wp_terms_args['name'] = r[1]
-        wp_terms_args['slug'] = slugify(r[1])
+        wp_terms_args['name'] = r['Description']
+        wp_terms_args['slug'] = slugify(r['Description'])
         print(wp_terms_args)
-        term_id = execute_sql(my_target_db, wp_terms_sql, wp_terms_args, commit=True, get_last_id=True)
+        term_id = execute_sql(TARGET_DB, wp_terms_sql, wp_terms_args, commit=True, get_last_id=True)
 
         wp_termmeta_args['term_id'] = term_id
-        wp_termmeta_args['order'] = 0
+        wp_termmeta_args['order'] = r['Sequence']
         wp_termmeta_args['display_type'] = ''
         wp_termmeta_args['thumbnail_id'] = 0
         for meta_key in ['order', 'display_type', 'thumbnail_id']:
@@ -280,98 +436,14 @@ def migrate_categories(my_source_db, my_target_db, table, label):
             wp_termmeta_args['meta_value'] = wp_termmeta_args[meta_key]
             wp_termmeta_sql = "INSERT INTO wp_termmeta (term_id,meta_key,meta_value) VALUES (%(term_id)s,%(meta_key)s,%(meta_value)s)"
             print(wp_termmeta_args)
-            meta_id = execute_sql(my_target_db, wp_termmeta_sql, wp_termmeta_args, commit=True, get_last_id=True)
+            meta_id = execute_sql(TARGET_DB, wp_termmeta_sql, wp_termmeta_args, commit=True, get_last_id=True)
 
         wp_term_taxonomy_args['term_id'] = term_id
         wp_term_taxonomy_args['description'] = ''  # needs to be blank
         wp_term_taxonomy_sql = "INSERT INTO wp_term_taxonomy (term_id,taxonomy,description,parent,count) VALUES (%(term_id)s,%(taxonomy)s,%(description)s,%(parent)s,%(count)s)"
         print(wp_term_taxonomy_args)
-        term_taxonomy_id = execute_sql(my_target_db, wp_term_taxonomy_sql, wp_term_taxonomy_args, commit=True,
+        term_taxonomy_id = execute_sql(TARGET_DB, wp_term_taxonomy_sql, wp_term_taxonomy_args, commit=True,
                                        get_last_id=True)
-
-
-def DEPR_migrate_users():
-    global SOURCE_DB
-
-    # delete existing data
-
-    # fetch data
-
-    sql = "SELECT * FROM Artists ORDER BY Code LIMIT 10"
-    my_results = execute_sql(SOURCE_DB, 'SELECT * FROM Artists LIMIT 10', '')
-
-    for r in my_results:
-        wp_user_meta_rows['artist_work_phone'] = r['WorkPhone']
-    wp_user_meta_rows['_artist_work_phone'] = get_acf_field_code('artist_work_phone')
-
-    wp_user_meta_rows['_order_count'] = '0'
-    wp_user_meta_rows['last_update'] = str(int(time.mktime(datetime.datetime.now().timetuple())))
-
-    for c in wp_user_meta_rows:
-        t['user_id'] = USER_ID
-        t['meta_key'] = c
-        t['meta_value'] = wp_user_meta_rows[c]
-
-        sql = ("INSERT INTO wp_usermeta"
-               " (user_id, meta_key, meta_value)"
-               "VALUES(%(user_id)s, %(meta_key)s, %(meta_value)s)")
-        UMETA_ID = execute_sql(TARGET_DB, sql, t, commit=True, get_last_id=True)
-
-
-
-def migrate_categories(my_source_db, my_target_db, table, label):
-
-    my_source_cursor = my_source_db.cursor()
-    my_target_cursor = my_target_db.cursor()
-
-    # get parent id
-
-    sql = "SELECT term_id FROM wp_terms where name='%s' " % label
-    results = execute_sql(my_target_db, sql, '' )
-    group_id = results[0][0]
-    parent = group_id
-
-    # get source data
-
-    sql = "SELECT * FROM %s ORDER BY ID" % table
-
-    results = execute_sql(my_source_db, sql, '' )
-
-    # create individual rows
-
-    wp_terms_args = dict()
-    wp_termmeta_args = dict()
-    wp_term_taxonomy_args = dict()
-
-    wp_terms_args['term_group'] = 0
-    wp_term_taxonomy_args['taxonomy'] = 'product_cat'
-    wp_term_taxonomy_args['parent'] = parent
-    wp_term_taxonomy_args['count'] = 0
-
-    for r in results:
-        print(r)
-        wp_terms_sql = "INSERT INTO wp_terms (name,slug,term_group) VALUES (%(name)s,%(slug)s,%(term_group)s)"
-        wp_terms_args['name'] = r[1]
-        wp_terms_args['slug'] = slugify(r[1])
-        print( wp_terms_args)
-        term_id = execute_sql(my_target_db, wp_terms_sql, wp_terms_args, commit=True, get_last_id=True)
-
-        wp_termmeta_args['term_id'] = term_id
-        wp_termmeta_args['order'] = 0
-        wp_termmeta_args['display_type'] = ''
-        wp_termmeta_args['thumbnail_id'] = 0
-        for meta_key in ['order', 'display_type', 'thumbnail_id']:
-            wp_termmeta_args['meta_key'] = meta_key
-            wp_termmeta_args['meta_value'] = wp_termmeta_args[meta_key]
-            wp_termmeta_sql = "INSERT INTO wp_termmeta (term_id,meta_key,meta_value) VALUES (%(term_id)s,%(meta_key)s,%(meta_value)s)"
-            print( wp_termmeta_args)
-            meta_id = execute_sql(my_target_db, wp_termmeta_sql, wp_termmeta_args, commit=True, get_last_id=True)
-
-        wp_term_taxonomy_args['term_id'] = term_id
-        wp_term_taxonomy_args['description'] = ''  # needs to be blank
-        wp_term_taxonomy_sql = "INSERT INTO wp_term_taxonomy (term_id,taxonomy,description,parent,count) VALUES (%(term_id)s,%(taxonomy)s,%(description)s,%(parent)s,%(count)s)"
-        print( wp_term_taxonomy_args)
-        term_taxonomy_id = execute_sql(my_target_db, wp_term_taxonomy_sql, wp_term_taxonomy_args, commit=True, get_last_id=True)
 
 
 def migrate_users():
@@ -406,11 +478,13 @@ def main():
     # r = execute_sql(SOURCE_DB, 'SELECT * FROM Artists LIMIT 10', '')
     # print(r)
 
-    migrate_users()
+    # migrate_users()
 
-    # migrate_categories(source_db, target_db, "WorksCategory", "Category")
-    # migrate_categories(source_db, target_db, "WorksSubject", "Subject")
-    # migrate_categories(source_db, target_db, "WorksMedium", "Medium")
+    # migrate_categories("WorksCategory", "Category")
+    # migrate_categories("WorksSubject", "Subject")
+    # migrate_categories("WorksMedium", "Medium")
+
+    migrate_products()
 
     pass
 
