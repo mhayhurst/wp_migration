@@ -232,10 +232,32 @@ def migrate_products():
     term_ids = dict()
 
     for r in results:
-        term_ids[r['name']]=r['term_id']
+        term_ids[r['name']] = r['term_id']
 
-    # print(term_ids)
+    # get current lookups from source
 
+    saa_lookups = dict()
+    saa_lookups['Category'] = dict()
+    saa_lookups['Subject'] = dict()
+    saa_lookups['Medium'] = dict()
+
+    sql = "SELECT ID, Description FROM WorksCategory"
+    results = execute_sql(SOURCE_DB, sql, '')
+
+    for r in results:
+        saa_lookups['Category'][r['ID']] = r['Description']
+
+    sql = "SELECT ID, Description FROM WorksSubject"
+    results = execute_sql(SOURCE_DB, sql, '')
+
+    for r in results:
+        saa_lookups['Subject'][r['ID']] = r['Description']
+
+    sql = "SELECT ID, Description FROM WorksMedium"
+    results = execute_sql(SOURCE_DB, sql, '')
+
+    for r in results:
+        saa_lookups['Medium'][r['ID']] = r['Description']
 
     # get source data
 
@@ -362,6 +384,9 @@ def migrate_products():
     """
 
     wp_posts_args = dict()
+    wp_postmeta_args = dict()
+    wp_term_relationship_args = dict()
+
     wp_posts_args['post_status'] = 'publish'
     wp_posts_args['post_password'] = None
     wp_posts_args['ping_status'] = 'closed'
@@ -373,6 +398,23 @@ def migrate_products():
     wp_posts_args['menu_order'] = 0
     wp_posts_args['post_type'] = 'product'
     wp_posts_args['comment_count'] = 0
+
+    wp_postmeta_args['total_sales'] = 0
+    wp_postmeta_args['_tax_status'] = 'taxable'
+    wp_postmeta_args['_tax_class'] = ''
+    wp_postmeta_args['_manage_stock'] = 'no'
+    wp_postmeta_args['_backorders'] = 'no'
+    wp_postmeta_args['_sold_individually'] = 'yes'
+    wp_postmeta_args['_virtual'] = 'no'
+    wp_postmeta_args['_downloadable'] = 'no'
+    wp_postmeta_args['_download_limit'] = -1
+    wp_postmeta_args['_download_expiry'] = -1
+    wp_postmeta_args['_stock'] = None
+    wp_postmeta_args['_wc_average_rating'] = 0
+    wp_postmeta_args['_wc_review_count'] = 0
+    wp_postmeta_args['_product_version'] = '3.8.0' # ???
+
+    # wp_term_relationship_args['term_taxonomy'] = 2
 
     for r in results:
         wp_posts_args['post_name'] = r['CanonicalPath']
@@ -386,6 +428,47 @@ def migrate_products():
 
         print(wp_posts_args)
         post_id = execute_sql(TARGET_DB, wp_posts_sql, wp_posts_args, commit=True, get_last_id=True)
+
+        wp_postmeta_args['post_id'] = post_id
+
+        wp_postmeta_args['_sku'] = r['ID']
+        wp_postmeta_args['_stock_status'] = term_ids['instock'] # TODO: Allow for outofstock
+        wp_postmeta_args['_regular_price'] = r['Price']
+        wp_postmeta_args['_price'] = r['Price']
+        wp_postmeta_args['_width'] = r['SizeWidth']
+        wp_postmeta_args['_height'] = r['SizeHeight']
+        wp_postmeta_args['_length'] = r['SizeDepth']
+        wp_postmeta_args['_weight'] = r['Weight']
+        # wp_postmeta_args['x'] = None
+        # wp_postmeta_args['x'] = None
+        # wp_postmeta_args['x'] = None
+
+        print(wp_postmeta_args)
+        postmeta_id = execute_sql(TARGET_DB, wp_postmeta_sql, wp_postmeta_args, commit=True, get_last_id=True)
+
+        wp_term_relationship_args['object_id'] = post_id
+        wp_term_relationship_args['term_order'] = 0
+
+        # Category
+
+        wp_term_relationship_args['term_taxonomy'] = saa_lookups['Category'][r['CategoryID']]
+
+        print(wp_term_relationship_args)
+        execute_sql(TARGET_DB, wp_term_relationship_sql, wp_term_relationship_args, commit=True, get_last_id=True)
+
+        # Subject
+
+        wp_term_relationship_args['term_taxonomy'] = saa_lookups['Subject'][r['SubjectID']]
+
+        print(wp_term_relationship_args)
+        execute_sql(TARGET_DB, wp_term_relationship_sql, wp_term_relationship_args, commit=True, get_last_id=True)
+
+        # Medium
+
+        wp_term_relationship_args['term_taxonomy'] = saa_lookups['Medium'][r['MediumID']]
+
+        print(wp_term_relationship_args)
+        execute_sql(TARGET_DB, wp_term_relationship_sql, wp_term_relationship_args, commit=True, get_last_id=True)
 
 
 def migrate_categories(table, label):
